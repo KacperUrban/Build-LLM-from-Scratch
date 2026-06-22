@@ -54,7 +54,7 @@ class CausalAttention(nn.Module):
         self.W_key = nn.Linear(d_in, d_out, bias=qkv_bias)
         self.W_query = nn.Linear(d_in, d_out, bias=qkv_bias)
         self.W_value = nn.Linear(d_in, d_out, bias=qkv_bias)
-        self.droupout = nn.Dropout(drop_rate)
+        self.dropout = nn.Dropout(drop_rate)
         self.register_buffer("mask", torch.triu(torch.ones(context_len, context_len), diagonal=1).bool())
 
     def forward(self, x):
@@ -66,6 +66,6 @@ class CausalAttention(nn.Module):
         attention_scores = query @ key.transpose(1, 2)
         attention_scores.masked_fill_(self.mask[:num_of_tokens, :num_of_tokens], -torch.inf)
         attention_weights = torch.softmax(attention_scores / key.shape[-1]**0.5, dim=-1)
-        attention_weights = self.droupout(attention_weights)
+        attention_weights = self.dropout(attention_weights)
         context_vector = attention_weights @ value
         return context_vector

@@ -21,3 +21,10 @@ def plot_losses(epochs_seen, tokens_seen, train_losses, val_losses):
 def softmax_with_temperature(logits, temperature):
     scaled_probas = logits / temperature
     return torch.softmax(scaled_probas, dim=-1)
+
+def assign(left, right):
+    if left.shape != right.shape:
+        raise ValueError(f"Shape mismatch. Left: {left.shape}, "
+        "Right: {right.shape}"
+        )
+    return torch.nn.Parameter(torch.tensor(right))

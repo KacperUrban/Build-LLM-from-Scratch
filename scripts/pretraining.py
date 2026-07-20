@@ -85,18 +85,29 @@ def train_llm(
     eval_iter,
     start_context,
     tokenizer,
+    warmup_steps=0,
+    initial_warmup=0.0,
+    peak_lr=0.001,
 ):
-    track_train_loss, track_val_loss, track_tokens_seen = [], [], []
+    track_train_loss, track_val_loss, track_tokens_seen, track_lrs = [], [], [], []
     tokens_seen, global_step = 0, -1
+    lr_increment = ((peak_lr - initial_warmup) / warmup_steps if warmup_steps > 0 else 0)
     for i in range(num_epoch):
         model.train()
         for input, target in train_dataloader:
+            global_step += 1
+            if global_step < warmup_steps:
+                lr = initial_warmup + (global_step * lr_increment)
+            else:
+                lr = peak_lr
+            for param_group in optimizer.param_groups:
+                param_group["lr"] = lr
+            track_lrs.append(lr)
             optimizer.zero_grad()
             loss = calc_loss_batch(input, target, model, device)
             loss.backward()
             optimizer.step()
             tokens_seen += input.numel()
-            global_step += 1
 
             if global_step % eval_freq == 0:
                 train_loss, val_loss = eval_model(
@@ -105,14 +116,14 @@ def train_llm(
                 track_train_loss.append(train_loss)
                 track_val_loss.append(val_loss)
                 track_tokens_seen.append(tokens_seen)
-                print(f"Epoch: {i+1}, step: {global_step:06d}")
+                print(f"Epoch: {i+1}, step: {global_step:06d}, lr: {lr}")
                 print(f"Train loss: {train_loss:.3f}, Valid loss: {val_loss:.3f}")
                 print(
                     f"Training perplexity: {torch.exp(torch.tensor(train_loss)):.3f}, Valid perplexity: {torch.exp(torch.tensor(val_loss)):.3f}"
                 )
 
         generate_and_print_sample(model, tokenizer, start_context, device)
-    return track_train_loss, track_val_loss, track_tokens_seen
+    return track_train_loss, track_val_loss, track_tokens_seen, track_lrs
 
 
 def eval_model(train_dataloader, val_dataloader, model, device, eval_iter):

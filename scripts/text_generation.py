@@ -1,7 +1,7 @@
 import torch
 import tiktoken
 import torch
-from utils import softmax_with_temperature
+from scripts.utils import softmax_with_temperature
 
 
 def text_to_tokens_ids(text: str, tokenizer):
@@ -38,7 +38,7 @@ def generate(model, idx, max_new_tokens, context_size, temperature=0.0, top_k=No
         last_token = logits[:, -1, :]
 
         if top_k:
-            top_k_tokens = torch.topk(last_token, k=k).values
+            top_k_tokens = torch.topk(last_token, k=top_k).values
             last_token = torch.where(
                 last_token < torch.min(top_k_tokens),
                 torch.tensor(float('-inf')),

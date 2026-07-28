@@ -5,7 +5,8 @@ from scripts.text_generation import (
 )
 import tiktoken
 import torch
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import Dataset, DataLoader, IterableDataset
+from datasets import load_dataset
 
 
 class GPTDatasetV1(Dataset):
@@ -25,6 +26,64 @@ class GPTDatasetV1(Dataset):
 
     def __getitem__(self, idx):
         return self.input_ids[idx], self.target_ids[idx]
+
+
+class IterableGPTDataset(IterableDataset):
+    def __init__(
+        self, dataset, tokenizer, max_length, stride=None, eos_token="<|endoftext|>"
+    ):
+        self.dataset = dataset
+        self.tokenizer = tokenizer
+        self.max_length = max_length
+        self.stride = stride if stride is not None else max_length
+        self.eos_token = eos_token
+
+    def __iter__(self):
+        buffer = []
+
+        for item in self.dataset:
+            text = item["text"] + f" {self.eos_token} "
+            token_ids = self.tokenizer.encode(text, allowed_special={self.eos_token})
+            buffer.extend(token_ids)
+
+            while len(buffer) >= self.max_length + 1:
+                input_tokens = buffer[: self.max_length]
+                target_tokens = buffer[1 : self.max_length + 1]
+
+                yield torch.tensor(input_tokens), torch.tensor(target_tokens)
+
+                buffer = buffer[self.stride :]
+
+
+def create_streaming_dataloader(
+    dataset_name: str,
+    max_length=256,
+    stride=128,
+    batch_size=4,
+    num_workers=0,
+    train_set=True,
+):
+    tokenizer = tiktoken.get_encoding("gpt2")
+
+    dataset = load_dataset(dataset_name, streaming=True)
+
+    if train_set:
+        dataset = dataset["train"]
+        dataset = dataset.shuffle(seed=42, buffer_size=10_000)
+    else:
+        dataset = dataset["validation"]
+
+    streaming_dataset = IterableGPTDataset(
+        dataset=dataset, tokenizer=tokenizer, max_length=max_length, stride=stride
+    )
+    streaming_dataloader = DataLoader(
+        streaming_dataset,
+        batch_size=batch_size,
+        num_workers=num_workers,
+        drop_last=train_set,
+    )
+
+    return streaming_dataloader
 
 
 def create_dataloaderv1(
@@ -91,7 +150,7 @@ def train_llm(
 ):
     track_train_loss, track_val_loss, track_tokens_seen, track_lrs = [], [], [], []
     tokens_seen, global_step = 0, -1
-    lr_increment = ((peak_lr - initial_warmup) / warmup_steps if warmup_steps > 0 else 0)
+    lr_increment = (peak_lr - initial_warmup) / warmup_steps if warmup_steps > 0 else 0
     for i in range(num_epoch):
         model.train()
         for input, target in train_dataloader:

@@ -7,7 +7,7 @@ import tiktoken
 import torch
 from torch.utils.data import Dataset, DataLoader, IterableDataset
 from datasets import load_dataset
-
+from tqdm import tqdm
 
 class GPTDatasetV1(Dataset):
     def __init__(self, txt, tokenizer, max_length, stride):
@@ -116,21 +116,21 @@ def calc_loss_batch(input, target, model, device):
 
 
 def calc_loss_dataloader(dataloader, model, device, num_batches=None):
-    total_loss = 0
-    if len(dataloader) == 0:
-        return float("nan")
-    elif num_batches is None:
-        num_batches = len(dataloader)
-    else:
-        num_batches = min(len(dataloader), num_batches)
+    total_loss = 0.0
+    batches_seen = 0
 
     for i, (input, target) in enumerate(dataloader):
-        if i < num_batches:
-            loss = calc_loss_batch(input, target, model, device)
-            total_loss += loss.item()
-        else:
+        if num_batches is not None and i >= num_batches:
             break
-    return total_loss / num_batches
+
+        loss = calc_loss_batch(input, target, model, device)
+        total_loss += loss.item()
+        batches_seen += 1
+
+    if batches_seen == 0:
+        return float("nan")
+
+    return total_loss / batches_seen
 
 
 def train_llm(
@@ -140,20 +140,27 @@ def train_llm(
     optimizer,
     num_epoch,
     device,
-    eval_freq,
-    eval_iter,
     start_context,
     tokenizer,
+    eval_iter=None,
+    eval_freq=10,
     warmup_steps=0,
     initial_warmup=0.0,
     peak_lr=0.001,
+    save_path=None,
 ):
     track_train_loss, track_val_loss, track_tokens_seen, track_lrs = [], [], [], []
     tokens_seen, global_step = 0, -1
     lr_increment = (peak_lr - initial_warmup) / warmup_steps if warmup_steps > 0 else 0
     for i in range(num_epoch):
+        progress_bar = tqdm(
+            train_dataloader,
+            desc=f"Epoch {i+1}/{num_epoch}",
+            unit="batch",
+            leave=False,
+        )
         model.train()
-        for input, target in train_dataloader:
+        for input, target in progress_bar:
             global_step += 1
             if global_step < warmup_steps:
                 lr = initial_warmup + (global_step * lr_increment)
@@ -182,6 +189,8 @@ def train_llm(
                 )
 
         generate_and_print_sample(model, tokenizer, start_context, device)
+    if save_path:
+        torch.save(model.state_dict(), save_path)
     return track_train_loss, track_val_loss, track_tokens_seen, track_lrs
 
 

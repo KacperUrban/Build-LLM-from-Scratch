@@ -1,7 +1,7 @@
 import torch
 import tiktoken
 import torch
-from scripts.utils import softmax_with_temperature
+from src.utils import softmax_with_temperature
 
 
 def text_to_tokens_ids(text: str, tokenizer):

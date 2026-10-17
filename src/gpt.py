@@ -1,6 +1,6 @@
 from torch import nn
 import torch
-from scripts.attention import MultiHeadAttention
+from src.attention import MultiHeadAttention
 
 
 class LayerNormalization(nn.Module):

@@ -1,4 +1,4 @@
-from scripts.text_generation import (
+from src.text_generation import (
     generate_simple_text,
     text_to_tokens_ids,
     tokens_ids_to_text,
@@ -8,6 +8,7 @@ import torch
 from torch.utils.data import Dataset, DataLoader, IterableDataset
 from datasets import load_dataset
 from tqdm import tqdm
+import mlflow
 
 class GPTDatasetV1(Dataset):
     def __init__(self, txt, tokenizer, max_length, stride):
@@ -148,49 +149,78 @@ def train_llm(
     initial_warmup=0.0,
     peak_lr=0.001,
     save_path=None,
+    mlflow_experiment_name=None,
 ):
-    track_train_loss, track_val_loss, track_tokens_seen, track_lrs = [], [], [], []
-    tokens_seen, global_step = 0, -1
-    lr_increment = (peak_lr - initial_warmup) / warmup_steps if warmup_steps > 0 else 0
-    for i in range(num_epoch):
-        progress_bar = tqdm(
-            train_dataloader,
-            desc=f"Epoch {i+1}/{num_epoch}",
-            unit="batch",
-            leave=False,
-        )
-        model.train()
-        for input, target in progress_bar:
-            global_step += 1
-            if global_step < warmup_steps:
-                lr = initial_warmup + (global_step * lr_increment)
-            else:
-                lr = peak_lr
-            for param_group in optimizer.param_groups:
-                param_group["lr"] = lr
-            track_lrs.append(lr)
-            optimizer.zero_grad()
-            loss = calc_loss_batch(input, target, model, device)
-            loss.backward()
-            optimizer.step()
-            tokens_seen += input.numel()
+    try:
+        if mlflow_experiment_name:
+            mlflow.set_experiment(mlflow_experiment_name)
+            mlflow.start_run()
+            mlflow.log_params(
+                {
+                    "num_epoch": num_epoch,
+                    "eval_iter": eval_iter,
+                    "warmup_steps": warmup_steps,
+                    "initial_warmup": initial_warmup,
+                    "peak_lr": peak_lr,
+                }
+            )
+        track_train_loss, track_val_loss, track_tokens_seen, track_lrs = [], [], [], []
+        tokens_seen, global_step = 0, -1
+        lr_increment = (peak_lr - initial_warmup) / warmup_steps if warmup_steps > 0 else 0
+        for i in range(num_epoch):
+            progress_bar = tqdm(
+                train_dataloader,
+                desc=f"Epoch {i+1}/{num_epoch}",
+                unit="batch",
+                leave=False,
+            )
+            model.train()
+            for input, target in progress_bar:
+                global_step += 1
+                if global_step < warmup_steps:
+                    lr = initial_warmup + (global_step * lr_increment)
+                else:
+                    lr = peak_lr
+                for param_group in optimizer.param_groups:
+                    param_group["lr"] = lr
+                track_lrs.append(lr)
+                optimizer.zero_grad()
+                loss = calc_loss_batch(input, target, model, device)
+                loss.backward()
+                optimizer.step()
+                tokens_seen += input.numel()
 
-            if global_step % eval_freq == 0:
-                train_loss, val_loss = eval_model(
-                    train_dataloader, val_dataloader, model, device, eval_iter
-                )
-                track_train_loss.append(train_loss)
-                track_val_loss.append(val_loss)
-                track_tokens_seen.append(tokens_seen)
-                print(f"Epoch: {i+1}, step: {global_step:06d}, lr: {lr}")
-                print(f"Train loss: {train_loss:.3f}, Valid loss: {val_loss:.3f}")
-                print(
-                    f"Training perplexity: {torch.exp(torch.tensor(train_loss)):.3f}, Valid perplexity: {torch.exp(torch.tensor(val_loss)):.3f}"
-                )
+                if global_step % eval_freq == 0:
+                    train_loss, val_loss = eval_model(
+                        train_dataloader, val_dataloader, model, device, eval_iter
+                    )
+                    track_train_loss.append(train_loss)
+                    track_val_loss.append(val_loss)
+                    track_tokens_seen.append(tokens_seen)
+                    if mlflow_experiment_name:
+                        mlflow.log_metrics(
+                            {
+                                "train_loss": train_loss,
+                                "val_loss": val_loss,
+                                "tokens_seen": tokens_seen,
+                                "train_perplexity": torch.exp(torch.tensor(train_loss)).item(),
+                                "val_perplexity": torch.exp(torch.tensor(val_loss)).item(),
+                                "lr": lr,
+                            },
+                            step=global_step,
+                        )
+                    print(f"Epoch: {i+1}, step: {global_step:06d}, lr: {lr}")
+                    print(f"Train loss: {train_loss:.3f}, Valid loss: {val_loss:.3f}")
+                    print(
+                        f"Training perplexity: {torch.exp(torch.tensor(train_loss)):.3f}, Valid perplexity: {torch.exp(torch.tensor(val_loss)):.3f}"
+                    )
 
-        generate_and_print_sample(model, tokenizer, start_context, device)
-    if save_path:
-        torch.save(model.state_dict(), save_path)
+            generate_and_print_sample(model, tokenizer, start_context, device)
+        if save_path:
+            torch.save(model.state_dict(), save_path)
+    finally:
+        if mlflow_experiment_name:
+            mlflow.end_run()
     return track_train_loss, track_val_loss, track_tokens_seen, track_lrs
 
 
